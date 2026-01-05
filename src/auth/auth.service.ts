@@ -266,4 +266,27 @@ export class AuthService {
 
         return { success: true };
     }
+
+    async logoutAll(params: {
+        userId: string;
+    }) {
+        const sessions = await this.prisma.session.findMany({
+            where: {
+                userId: params.userId,
+                isActive: true,
+            },
+            select: { id: true },
+        });
+
+        for (const session of sessions) {
+            await this.tokenService.invalidateSession(
+                session.id,
+                'USER_LOGOUT_ALL',
+            );
+        }
+
+        return { success: true };
+    }
+
+    
 }
