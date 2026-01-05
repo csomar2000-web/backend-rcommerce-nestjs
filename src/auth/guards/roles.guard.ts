@@ -1,4 +1,3 @@
-// src/auth/guards/roles.guard.ts
 import {
   CanActivate,
   ExecutionContext,
@@ -7,19 +6,33 @@ import {
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from '../../common/decorators/roles.decorator';
 
+interface AuthenticatedUser {
+  userId: string;
+  role: string;
+}
+
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+  constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const requiredRoles = this.reflector.getAllAndOverride<string[]>(
-      ROLES_KEY,
-      [context.getHandler(), context.getClass()],
-    );
+    const requiredRoles =
+      this.reflector.getAllAndOverride<string[]>(
+        ROLES_KEY,
+        [context.getHandler(), context.getClass()],
+      );
 
-    if (!requiredRoles) return true;
+    if (!requiredRoles || requiredRoles.length === 0) {
+      return true;
+    }
 
-    const { user } = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest();
+    const user = request.user as AuthenticatedUser | undefined;
+
+    if (!user || !user.role) {
+      return false;
+    }
+
     return requiredRoles.includes(user.role);
   }
 }
