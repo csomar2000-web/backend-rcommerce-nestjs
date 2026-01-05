@@ -64,6 +64,7 @@ export class AuthService {
                 },
             },
         });
+
         const session = await this.prisma.session.create({
             data: {
                 userId: user.id,
@@ -76,7 +77,11 @@ export class AuthService {
         });
 
         const accessToken =
-            this.tokenService.generateAccessToken(user.id, 'CUSTOMER');
+            this.tokenService.generateAccessToken(
+                user.id,
+                'CUSTOMER',
+                session.id,
+            );
 
         const { refreshToken } =
             await this.tokenService.generateRefreshToken({
@@ -88,6 +93,7 @@ export class AuthService {
 
         return { accessToken, refreshToken };
     }
+
     async login(params: {
         email: string;
         password: string;
@@ -132,6 +138,7 @@ export class AuthService {
             this.tokenService.generateAccessToken(
                 account.user.id,
                 'CUSTOMER',
+                session.id,
             );
 
         const { refreshToken } =
@@ -144,6 +151,7 @@ export class AuthService {
 
         return { accessToken, refreshToken };
     }
+
     async refresh(params: {
         refreshToken: string;
         ipAddress: string;
@@ -151,33 +159,32 @@ export class AuthService {
     }) {
         const { refreshToken, ipAddress, userAgent } = params;
 
-        const { refreshToken: newRefreshToken } =
-            await this.tokenService.rotateRefreshToken({
-                refreshToken,
-                ipAddress,
-                userAgent,
-            });
+        const {
+            userId,
+            sessionId,
+            refreshToken: newRefreshToken,
+        } = await this.tokenService.rotateRefreshToken({
+            refreshToken,
+            ipAddress,
+            userAgent,
+        });
 
-        const tokenRecord =
-            await this.prisma.refreshToken.findUnique({
-                where: {
-                    tokenHash:
-                        this.tokenService['hashToken'](refreshToken),
-                },
-                include: {
-                    user: true,
-                    session: true,
-                },
-            });
+        const session = await this.prisma.session.findFirst({
+            where: {
+                id: sessionId,
+                isActive: true,
+            },
+        });
 
-        if (!tokenRecord || !tokenRecord.session.isActive) {
+        if (!session) {
             throw new UnauthorizedException('Session invalid');
         }
 
         const accessToken =
             this.tokenService.generateAccessToken(
-                tokenRecord.userId,
+                userId,
                 'CUSTOMER',
+                sessionId,
             );
 
         return {
@@ -185,6 +192,7 @@ export class AuthService {
             refreshToken: newRefreshToken,
         };
     }
+
     async logout(params: {
         userId: string;
         sessionId: string;

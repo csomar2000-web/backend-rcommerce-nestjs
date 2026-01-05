@@ -12,12 +12,23 @@ import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
+interface AuthenticatedRequest extends Request {
+  user: {
+    userId: string;
+    role: string;
+    sessionId: string;
+  };
+}
+
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService) { }
 
   @Post('register')
-  async register(@Body() dto: RegisterDto, @Req() req: Request) {
+  async register(
+    @Body() dto: RegisterDto,
+    @Req() req: Request,
+  ) {
     return this.authService.register({
       email: dto.email,
       password: dto.password,
@@ -29,7 +40,10 @@ export class AuthController {
   }
 
   @Post('login')
-  async login(@Body() dto: LoginDto, @Req() req: Request) {
+  async login(
+    @Body() dto: LoginDto,
+    @Req() req: Request,
+  ) {
     return this.authService.login({
       email: dto.email,
       password: dto.password,
@@ -52,10 +66,10 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('logout')
-  async logout(@Req() req: Request) {
+  async logout(@Req() req: AuthenticatedRequest) {
     return this.authService.logout({
-      userId: (req.user as any).userId,
-      sessionId: (req.user as any).sessionId,
+      userId: req.user.userId,
+      sessionId: req.user.sessionId,
     });
   }
 }

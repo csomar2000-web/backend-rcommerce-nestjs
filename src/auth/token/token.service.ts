@@ -15,11 +15,15 @@ export class TokenService {
         private readonly prisma: PrismaService,
     ) { }
 
-
-    generateAccessToken(userId: string, role: string): string {
+    generateAccessToken(
+        userId: string,
+        role: string,
+        sessionId: string,
+    ): string {
         return this.jwt.sign({
             sub: userId,
             role,
+            sessionId,
         });
     }
 
@@ -48,7 +52,6 @@ export class TokenService {
             ),
         );
 
-
         await this.prisma.refreshToken.create({
             data: {
                 userId,
@@ -64,18 +67,20 @@ export class TokenService {
         return { refreshToken: rawToken };
     }
 
-
     async rotateRefreshToken(params: {
         refreshToken: string;
         ipAddress: string;
         userAgent: string;
-    }) {
+    }): Promise<{
+        userId: string;
+        sessionId: string;
+        refreshToken: string;
+    }> {
         const tokenHash = this.hashToken(params.refreshToken);
 
         const existingToken =
             await this.prisma.refreshToken.findUnique({
                 where: { tokenHash },
-                include: { session: true },
             });
 
         if (!existingToken) {
@@ -87,14 +92,22 @@ export class TokenService {
                 existingToken.sessionId,
                 'TOKEN_REUSE_DETECTED',
             );
-
             throw new ForbiddenException(
                 'Refresh token reuse detected',
             );
         }
 
         if (existingToken.expiresAt < new Date()) {
-            throw new ForbiddenException('Refresh token expired');
+            await this.prisma.refreshToken.update({
+                where: { id: existingToken.id },
+                data: {
+                    isRevoked: true,
+                    revokedAt: new Date(),
+                },
+            });
+            throw new ForbiddenException(
+                'Refresh token expired',
+            );
         }
 
         await this.prisma.refreshToken.update({
@@ -105,20 +118,28 @@ export class TokenService {
             },
         });
 
-        return this.generateRefreshToken({
+        const { refreshToken } =
+            await this.generateRefreshToken({
+                userId: existingToken.userId,
+                sessionId: existingToken.sessionId,
+                tokenFamily: existingToken.tokenFamily,
+                ipAddress: params.ipAddress,
+                userAgent: params.userAgent,
+            });
+
+        return {
             userId: existingToken.userId,
             sessionId: existingToken.sessionId,
-            tokenFamily: existingToken.tokenFamily,
-            ipAddress: params.ipAddress,
-            userAgent: params.userAgent,
-        });
+            refreshToken,
+        };
     }
+
     async invalidateSession(
         sessionId: string,
         reason: string,
     ) {
-        await this.prisma.session.update({
-            where: { id: sessionId },
+        await this.prisma.session.updateMany({
+            where: { id: sessionId, isActive: true },
             data: {
                 isActive: false,
                 invalidatedAt: new Date(),
@@ -135,7 +156,6 @@ export class TokenService {
         });
     }
 
-
     private hashToken(token: string): string {
         return crypto
             .createHash('sha256')
@@ -144,12 +164,16 @@ export class TokenService {
     }
 
     private parseTtl(ttl: string): number {
-        const value = parseInt(ttl, 10);
+        const value = Number.parseInt(ttl, 10);
+
+        if (Number.isNaN(value)) {
+            throw new Error(`Invalid JWT_REFRESH_TTL: ${ttl}`);
+        }
+
         if (ttl.endsWith('d')) return value * 86400000;
         if (ttl.endsWith('h')) return value * 3600000;
         if (ttl.endsWith('m')) return value * 60000;
+
         return value * 1000;
     }
-
 }
-
