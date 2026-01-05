@@ -1,7 +1,7 @@
-// src/auth/dto/refresh-token.dto.ts
-import { IsString } from 'class-validator';
+import { IsString, MinLength } from 'class-validator';
 
 export class RefreshTokenDto {
   @IsString()
+  @MinLength(32)
   refreshToken: string;
 }
