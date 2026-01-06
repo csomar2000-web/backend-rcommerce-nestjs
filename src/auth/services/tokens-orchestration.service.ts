@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TokenService } from '../token/token.service';
+import { MfaType, MfaChallengeReason } from '@prisma/client';
 
 @Injectable()
 export class TokensOrchestrationService {
@@ -14,7 +15,7 @@ export class TokensOrchestrationService {
   ) { }
 
   /* ------------------------------------------------------------------
-   * ISSUE TOKENS
+   * ISSUE TOKENS (used after login or MFA completion)
    * ------------------------------------------------------------------ */
 
   async issueTokens(params: {
@@ -42,7 +43,7 @@ export class TokensOrchestrationService {
   }
 
   /* ------------------------------------------------------------------
-   * REFRESH TOKENS
+   * REFRESH TOKENS (WITH MFA ENFORCEMENT)
    * ------------------------------------------------------------------ */
 
   async refreshTokens(params: {
@@ -50,6 +51,9 @@ export class TokensOrchestrationService {
     ipAddress: string;
     userAgent: string;
   }) {
+    /**
+     * 1️⃣ Rotate refresh token first (reuse detection stays intact)
+     */
     const rotation =
       await this.tokenService.rotateRefreshToken({
         refreshToken: params.refreshToken,
@@ -57,6 +61,9 @@ export class TokensOrchestrationService {
         userAgent: params.userAgent,
       });
 
+    /**
+     * 2️⃣ Validate session
+     */
     const session = await this.prisma.session.findFirst({
       where: {
         id: rotation.sessionId,
@@ -69,6 +76,54 @@ export class TokensOrchestrationService {
       throw new UnauthorizedException('Session invalid');
     }
 
+    /**
+     * 3️⃣ Determine if MFA is required on refresh
+     */
+    const requiresMfa = await this.requiresMfaOnRefresh({
+      userId: rotation.userId,
+      session,
+      ipAddress: params.ipAddress,
+      userAgent: params.userAgent,
+    });
+
+    if (requiresMfa) {
+      /**
+       * 4️⃣ Ensure an MFA challenge exists (idempotent)
+       */
+      await this.prisma.mfaChallenge.upsert({
+        where: {
+          sessionId_factorType: {
+            sessionId: session.id,
+            factorType: MfaType.TOTP,
+          },
+        },
+        update: {
+          expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+          satisfied: false,
+          reason: MfaChallengeReason.REFRESH,
+        },
+        create: {
+          userId: rotation.userId,
+          sessionId: session.id,
+          factorType: MfaType.TOTP,
+          expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+          reason: MfaChallengeReason.REFRESH,
+        },
+      });
+
+      /**
+       * ⛔ STOP HERE — do NOT issue access token
+       */
+      return {
+        mfaRequired: true,
+        reason: MfaChallengeReason.REFRESH,
+        sessionId: session.id,
+      };
+    }
+
+    /**
+     * 5️⃣ Issue new access token (MFA satisfied or not required)
+     */
     const roleAssignment =
       await this.prisma.userRoleAssignment.findFirst({
         where: {
@@ -100,6 +155,46 @@ export class TokensOrchestrationService {
       accessToken,
       refreshToken: rotation.refreshToken,
     };
+  }
+
+  /* ------------------------------------------------------------------
+   * MFA POLICY (CENTRALIZED, EASY TO EVOLVE)
+   * ------------------------------------------------------------------ */
+
+  private async requiresMfaOnRefresh(params: {
+    userId: string;
+    session: {
+      ipAddress: string;
+      userAgent: string;
+    };
+    ipAddress: string;
+    userAgent: string;
+  }): Promise<boolean> {
+    /**
+     * MFA not enabled → no enforcement
+     */
+    const mfaFactor = await this.prisma.mfaFactor.findFirst({
+      where: {
+        userId: params.userId,
+        isEnabled: true,
+        revokedAt: null,
+      },
+    });
+
+    if (!mfaFactor) return false;
+
+    /**
+     * Require MFA if IP or UA changes
+     * (You can extend this later: country, risk score, admin role, etc.)
+     */
+    if (
+      params.session.ipAddress !== params.ipAddress ||
+      params.session.userAgent !== params.userAgent
+    ) {
+      return true;
+    }
+
+    return false;
   }
 
   /* ------------------------------------------------------------------

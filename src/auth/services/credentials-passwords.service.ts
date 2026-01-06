@@ -9,7 +9,11 @@ import { TokenService } from '../token/token.service';
 import { SessionsDevicesService } from './sessions-devices.service';
 import { SecurityAbuseService } from './security-abuse.service';
 import { MailService } from '../../mail/mail.service';
-import { AuthProvider } from '@prisma/client';
+import {
+    AuthProvider,
+    MfaType,
+    MfaChallengeReason,
+} from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
@@ -27,7 +31,7 @@ export class CredentialsPasswordsService {
     ) { }
 
     /* ------------------------------------------------------------------ */
-    /* LOGIN                                                              */
+    /* LOGIN (MFA-AWARE)                                                   */
     /* ------------------------------------------------------------------ */
 
     async login(params: {
@@ -51,11 +55,7 @@ export class CredentialsPasswordsService {
         });
 
         if (!account || !account.passwordHash) {
-            await this.abuse.recordFailedLogin({
-                identifier: email,
-                ipAddress: params.ipAddress,
-                userAgent: params.userAgent,
-            });
+            await this.recordLoginFailure(email, params);
             throw new UnauthorizedException('Invalid credentials');
         }
 
@@ -69,16 +69,15 @@ export class CredentialsPasswordsService {
         );
 
         if (!valid) {
-            await this.abuse.recordFailedLogin({
-                identifier: email,
-                ipAddress: params.ipAddress,
-                userAgent: params.userAgent,
-            });
+            await this.recordLoginFailure(email, params);
             throw new UnauthorizedException('Invalid credentials');
         }
 
         await this.abuse.clearLoginFailures(email);
 
+        /**
+         * 1️⃣ Create session (but DO NOT issue tokens yet)
+         */
         const session = await this.sessions.createSession({
             userId: account.user.id,
             ipAddress: params.ipAddress,
@@ -87,6 +86,52 @@ export class CredentialsPasswordsService {
             deviceName: params.deviceName,
         });
 
+        /**
+         * 2️⃣ Check if MFA is enabled
+         */
+        const mfaFactor = await this.prisma.mfaFactor.findFirst({
+            where: {
+                userId: account.user.id,
+                isEnabled: true,
+                revokedAt: null,
+            },
+        });
+
+        if (mfaFactor) {
+            /**
+             * 3️⃣ Create MFA challenge (idempotent)
+             */
+            await this.prisma.mfaChallenge.upsert({
+                where: {
+                    sessionId_factorType: {
+                        sessionId: session.id,
+                        factorType: MfaType.TOTP,
+                    },
+                },
+                update: {
+                    satisfied: false,
+                    expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+                    reason: MfaChallengeReason.LOGIN,
+                },
+                create: {
+                    userId: account.user.id,
+                    sessionId: session.id,
+                    factorType: MfaType.TOTP,
+                    expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+                    reason: MfaChallengeReason.LOGIN,
+                },
+            });
+
+            return {
+                mfaRequired: true,
+                reason: MfaChallengeReason.LOGIN,
+                sessionId: session.id,
+            };
+        }
+
+        /**
+         * 4️⃣ MFA not enabled → issue tokens
+         */
         const accessToken = this.tokenService.generateAccessToken(
             account.user.id,
             'CUSTOMER',
@@ -122,7 +167,7 @@ export class CredentialsPasswordsService {
     }
 
     /* ------------------------------------------------------------------ */
-    /* PASSWORD RESET                                                     */
+    /* PASSWORD RESET (UNCHANGED, BUT SECURE)                              */
     /* ------------------------------------------------------------------ */
 
     async requestPasswordReset(params: {
@@ -232,7 +277,7 @@ export class CredentialsPasswordsService {
     }
 
     /* ------------------------------------------------------------------ */
-    /* PASSWORD CHANGE                                                    */
+    /* PASSWORD CHANGE (RECOMMENDED: REQUIRE MFA VIA CONTROLLER)           */
     /* ------------------------------------------------------------------ */
 
     async changePassword(params: {
@@ -300,6 +345,17 @@ export class CredentialsPasswordsService {
     /* ------------------------------------------------------------------ */
     /* HELPERS                                                            */
     /* ------------------------------------------------------------------ */
+
+    private async recordLoginFailure(
+        identifier: string,
+        params: { ipAddress: string; userAgent: string },
+    ) {
+        await this.abuse.recordFailedLogin({
+            identifier,
+            ipAddress: params.ipAddress,
+            userAgent: params.userAgent,
+        });
+    }
 
     private hashToken(token: string): string {
         return crypto.createHash('sha256').update(token).digest('hex');
