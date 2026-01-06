@@ -28,7 +28,7 @@ export interface AuthenticatedUser {
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
-    private readonly config: ConfigService,
+    config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly tokenService: TokenService,
   ) {
@@ -42,15 +42,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
-    if (!payload?.sub || !payload?.sessionId || !payload?.jti) {
-      throw new UnauthorizedException('Invalid token payload');
+    if (
+      !payload ||
+      !payload.sub ||
+      !payload.sessionId ||
+      !payload.jti
+    ) {
+      throw new UnauthorizedException('Invalid token');
     }
 
-    const isBlacklisted =
+    const revoked =
       await this.tokenService.isAccessTokenBlacklisted(payload.jti);
 
-    if (isBlacklisted) {
-      throw new UnauthorizedException('Token revoked');
+    if (revoked) {
+      throw new UnauthorizedException('Access token revoked');
     }
 
     const session = await this.prisma.session.findFirst({
@@ -58,6 +63,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         id: payload.sessionId,
         userId: payload.sub,
         isActive: true,
+        expiresAt: { gt: new Date() },
       },
       select: {
         id: true,
@@ -66,20 +72,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
 
     if (!session) {
-      throw new UnauthorizedException('Session not found');
-    }
-
-    if (session.expiresAt <= new Date()) {
-      await this.prisma.session.updateMany({
-        where: { id: session.id, isActive: true },
-        data: {
-          isActive: false,
-          invalidatedAt: new Date(),
-          invalidationReason: 'SESSION_EXPIRED',
-        },
-      });
-
-      throw new UnauthorizedException('Session expired');
+      throw new UnauthorizedException('Session invalid');
     }
 
     return {

@@ -24,29 +24,61 @@ model User {
   permissionOverrides UserPermissionOverride[]
   roleAssignments     UserRoleAssignment[]
   workerProfile       WorkerProfile?
+  mfaChallenges       MfaChallenge[]
 
   @@map("users")
 }
 
 model AuthAccount {
-  id           String       @id @default(cuid())
-  userId       String
-  provider     AuthProvider
-  providerId   String?
-  passwordHash String?
-  isPrimary    Boolean      @default(false)
-  isVerified   Boolean      @default(false)
-  metadata     Json?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  lastUsedAt   DateTime?
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  userId        String
+  provider      AuthProvider
+  providerId    String
+  emailVerified Boolean      @default(true)
+  passwordHash  String?
+  isPrimary     Boolean      @default(false)
+  isVerified    Boolean      @default(false)
+  metadata      Json?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  lastUsedAt    DateTime?
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerId])
   @@unique([userId, provider])
   @@index([userId])
   @@index([provider, providerId])
   @@map("auth_accounts")
+}
+
+model OAuthState {
+  id        String       @id @default(cuid())
+  state     String       @unique
+  provider  AuthProvider
+  expiresAt DateTime
+  used      Boolean      @default(false)
+  createdAt DateTime     @default(now())
+
+  @@index([state])
+  @@index([expiresAt])
+  @@map("oauth_states")
+}
+
+model MfaChallenge {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  codeHash  String?
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  reason    String?
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("mfa_challenges")
 }
 
 model Session {
@@ -409,6 +441,7 @@ model RateLimit {
   attempts     Int       @default(1)
   windowStart  DateTime
   windowEnd    DateTime
+  ipAddress    String?
   isBlocked    Boolean   @default(false)
   blockedUntil DateTime?
   createdAt    DateTime  @default(now())
@@ -455,7 +488,6 @@ enum AuthProvider {
   GOOGLE
   FACEBOOK
 }
-
 
 enum CompanyStatus {
   PENDING

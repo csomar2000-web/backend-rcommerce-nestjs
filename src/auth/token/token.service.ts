@@ -22,12 +22,17 @@ export class TokenService {
     ): string {
         const jti = crypto.randomUUID();
 
-        return this.jwt.sign({
-            sub: userId,
-            role,
-            sessionId,
-            jti,
-        });
+        return this.jwt.sign(
+            {
+                sub: userId,
+                role,
+                sessionId,
+                jti,
+            },
+            {
+                expiresIn: this.config.getOrThrow('JWT_ACCESS_TTL'),
+            },
+        );
     }
 
     async generateRefreshToken(params: {
@@ -49,9 +54,8 @@ export class TokenService {
         const tokenHash = this.hashToken(rawToken);
 
         const expiresAt = new Date(
-            Date.now() +
-            this.parseTtl(
-                this.config.getOrThrow<string>('JWT_REFRESH_TTL'),
+            Date.now() + this.parseTtl(
+                this.config.getOrThrow('JWT_REFRESH_TTL'),
             ),
         );
 
@@ -185,12 +189,29 @@ export class TokenService {
         });
     }
 
+    async blacklistAccessToken(params: {
+        jti: string;
+        userId?: string;
+        reason: string;
+        expiresAt: Date;
+    }): Promise<void> {
+        await this.prisma.tokenBlacklist.create({
+            data: {
+                tokenHash: this.hashToken(params.jti),
+                tokenType: 'ACCESS',
+                userId: params.userId,
+                expiresAt: params.expiresAt,
+                reason: params.reason,
+            },
+        });
+    }
+
     async isAccessTokenBlacklisted(
         jti: string,
     ): Promise<boolean> {
         const record =
             await this.prisma.tokenBlacklist.findUnique({
-                where: { tokenHash: jti },
+                where: { tokenHash: this.hashToken(jti) },
             });
 
         return !!record && record.expiresAt > new Date();
