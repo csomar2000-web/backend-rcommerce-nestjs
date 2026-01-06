@@ -25,6 +25,8 @@ model User {
   roleAssignments     UserRoleAssignment[]
   workerProfile       WorkerProfile?
   mfaChallenges       MfaChallenge[]
+  mfaFactors          MfaFactor[]
+  mfaRecoveryCodes    MfaRecoveryCode[]
 
   @@map("users")
 }
@@ -64,20 +66,43 @@ model OAuthState {
   @@map("oauth_states")
 }
 
-model MfaChallenge {
-  id        String   @id @default(cuid())
-  userId    String
-  type      String
-  codeHash  String?
-  expiresAt DateTime
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now())
-  reason    String?
-  
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+model MfaFactor {
+  id         String    @id @default(cuid())
+  userId     String
+  type       MfaType
+  secretHash String
+  isEnabled  Boolean   @default(false)
+  verifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
 
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
   @@index([userId])
+  @@index([userId, isEnabled])
+  @@map("mfa_factors")
+}
+
+model MfaChallenge {
+  id         String             @id @default(cuid())
+  userId     String
+  sessionId  String
+  factorType MfaType
+  satisfied  Boolean            @default(false)
+  expiresAt  DateTime
+  reason     MfaChallengeReason
+  createdAt  DateTime           @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, factorType])
+  @@index([userId, sessionId])
   @@index([expiresAt])
+  @@index([reason])
   @@map("mfa_challenges")
 }
 
@@ -100,6 +125,7 @@ model Session {
   updatedAt          DateTime       @updatedAt
   refreshTokens      RefreshToken[]
   user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mfaChallenges      MfaChallenge[]
 
   @@index([userId, isActive])
   @@index([sessionToken])
@@ -331,9 +357,6 @@ model AdminProfile {
   adminLevel     String   @default("standard")
   canManageRoles Boolean  @default(false)
   canManageUsers Boolean  @default(false)
-  mfaEnabled     Boolean  @default(false)
-  mfaSecret      String?
-  backupCodes    String[]
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -483,6 +506,20 @@ model TokenBlacklist {
   @@map("token_blacklist")
 }
 
+model MfaRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, codeHash])
+  @@index([userId])
+  @@map("mfa_recovery_codes")
+}
+
 enum AuthProvider {
   LOCAL
   GOOGLE
@@ -520,4 +557,15 @@ enum SecuritySeverity {
   MEDIUM
   HIGH
   CRITICAL
+}
+
+enum MfaType {
+  TOTP
+  WEBAUTHN
+}
+
+enum MfaChallengeReason {
+  LOGIN
+  REFRESH
+  SENSITIVE_ACTION
 }
