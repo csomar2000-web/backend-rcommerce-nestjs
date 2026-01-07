@@ -20,6 +20,8 @@ import { PasswordResetRequestDto } from './dto/password-reset.dto';
 import { PasswordResetConfirmDto } from './dto/password-reset-confirm.dto';
 import { PasswordChangeDto } from './dto/password-change.dto';
 import { RevokeSessionDto } from './dto/revoke-session.dto';
+import { GoogleAuthDto } from './dto/google-auth.dto';
+import { FacebookAuthDto } from './dto/facebook-auth.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -104,10 +106,7 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('password-change')
-  changePassword(
-    @Req() req: any,
-    @Body() dto: PasswordChangeDto,
-  ) {
+  changePassword(@Req() req: any, @Body() dto: PasswordChangeDto) {
     return this.auth.changePassword({
       userId: req.user.userId,
       ...dto,
@@ -122,10 +121,7 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('sessions/revoke')
-  revokeSession(
-    @Req() req: any,
-    @Body() dto: RevokeSessionDto,
-  ) {
+  revokeSession(@Req() req: any, @Body() dto: RevokeSessionDto) {
     const accessToken = this.extractAccessToken(req);
 
     return this.auth.revokeSession({
@@ -135,21 +131,29 @@ export class AuthController {
     });
   }
 
+  @Post('google')
+  googleAuth(@Body() dto: GoogleAuthDto, @Req() req: Request) {
+    return this.auth.loginWithGoogle({
+      idToken: dto.idToken,
+      ipAddress: req.ip ?? 'unknown',
+      userAgent: req.headers['user-agent'] ?? 'unknown',
+    });
+  }
+
+  @Post('facebook')
+  facebookAuth(@Body() dto: FacebookAuthDto, @Req() req: Request) {
+    return this.auth.loginWithFacebook({
+      accessToken: dto.accessToken,
+      ipAddress: req.ip ?? 'unknown',
+      userAgent: req.headers['user-agent'] ?? 'unknown',
+    });
+  }
+
   private extractAccessToken(req: Request): string {
     const header = req.headers.authorization;
     if (!header || !header.startsWith('Bearer ')) {
       throw new UnauthorizedException();
     }
     return header.slice(7);
-  }
-
-  @Post('google')
-  async googleAuth(@Body() dto: GoogleAuthDto, @Req() req: Request) {
-    return this.authService.loginWithGoogle(dto.idToken, req);
-  }
-
-  @Post('facebook')
-  async facebookAuth(@Body() dto: FacebookAuthDto, @Req() req: Request) {
-    return this.authService.loginWithFacebook(dto.accessToken, req);
   }
 }

@@ -179,6 +179,68 @@ export class AccountIdentityService {
 
     return { success: true };
   }
+  /* ------------------------------------------------------------------
+   * SOCIAL AUTH (UPSERT)
+   * ------------------------------------------------------------------ */
+
+  async upsertSocialAccount(params: {
+    provider: AuthProvider;
+    providerId: string;
+    email: string;
+    emailVerified: boolean;
+    name?: string;
+    avatarUrl?: string;
+  }) {
+    const normalizedEmail = params.email.toLowerCase().trim();
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Find or create user
+      let user = await tx.user.findUnique({
+        where: { email: normalizedEmail },
+      });
+
+      if (!user) {
+        user = await tx.user.create({
+          data: {
+            email: normalizedEmail,
+            name: params.name,
+            authAccounts: {
+              create: {
+                provider: params.provider,
+                providerId: params.providerId,
+                isPrimary: true,
+                isVerified: true,
+              },
+            },
+          },
+        });
+      }
+
+      // 2. Upsert social auth account
+      const authAccount = await tx.authAccount.upsert({
+        where: {
+          provider_providerId: {
+            provider: params.provider,
+            providerId: params.providerId,
+          },
+        },
+        update: {
+          email: normalizedEmail,
+          isVerified: true,
+        },
+        create: {
+          userId: user.id,
+          provider: params.provider,
+          providerId: params.providerId,
+          email: normalizedEmail,
+          isVerified: true,
+          isPrimary: false,
+        },
+      });
+
+      return { user, authAccount };
+    });
+  }
 
   /* ------------------------------------------------------------------
    * MFA SETUP (TOTP)

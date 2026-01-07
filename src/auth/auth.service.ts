@@ -27,7 +27,7 @@ export class AuthService {
     private readonly audit: AuditObservabilityService,
     private readonly googleAuth: GoogleAuthService,
     private readonly facebookAuth: FacebookAuthService,
-  ) {}
+  ) { }
 
   /* --------------------------------------------------------------------------
    * Registration & email verification
@@ -43,8 +43,8 @@ export class AuthService {
 
   resendVerification(email: string) {
     this.security.assertSensitiveActionAllowed({
-      action: 'EMAIL_VERIFICATION',
       identifier: email,
+      type: 'EMAIL_VERIFICATION',
     });
 
     return this.accountIdentity.resendVerification(email);
@@ -57,7 +57,6 @@ export class AuthService {
   async login(dto: any) {
     await this.security.assertLoginAllowed({
       identifier: dto.email,
-      ipAddress: dto.ipAddress,
     });
 
     try {
@@ -122,26 +121,32 @@ export class AuthService {
    * Social authentication
    * -------------------------------------------------------------------------- */
 
-  async loginWithGoogle(idToken: string, req: Request) {
+  async loginWithGoogle(dto: {
+    idToken: string;
+    ipAddress: string;
+    userAgent: string;
+  }) {
     await this.security.assertLoginAllowed({
       identifier: 'google',
-      ipAddress: req.ip,
     });
 
-    const profile = await this.googleAuth.verifyIdToken(idToken);
+    const profile = await this.googleAuth.verifyIdToken(dto.idToken);
 
-    return this.handleSocialLogin(AuthProvider.GOOGLE, profile, req);
+    return this.handleSocialLogin(AuthProvider.GOOGLE, profile, dto);
   }
 
-  async loginWithFacebook(accessToken: string, req: Request) {
+  async loginWithFacebook(dto: {
+    accessToken: string;
+    ipAddress: string;
+    userAgent: string;
+  }) {
     await this.security.assertLoginAllowed({
       identifier: 'facebook',
-      ipAddress: req.ip,
     });
 
-    const profile = await this.facebookAuth.verifyAccessToken(accessToken);
+    const profile = await this.facebookAuth.verifyAccessToken(dto.accessToken);
 
-    return this.handleSocialLogin(AuthProvider.FACEBOOK, profile, req);
+    return this.handleSocialLogin(AuthProvider.FACEBOOK, profile, dto);
   }
 
   /* --------------------------------------------------------------------------
@@ -151,9 +156,8 @@ export class AuthService {
   private async handleSocialLogin(
     provider: AuthProvider,
     profile: SocialProfile,
-    req: Request,
+    context: { ipAddress: string; userAgent: string },
   ) {
-    // Enforce email policy (recommended for production)
     if (!profile.email) {
       throw new UnauthorizedException('Social account has no email');
     }
@@ -172,29 +176,34 @@ export class AuthService {
         avatarUrl: profile.avatar,
       });
 
-    // Create session BEFORE MFA enforcement
     const session = await this.sessions.createSession({
       userId: user.id,
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent'],
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
     });
 
-    // Audit log
-    await this.audit.log({
-      action: 'AUTH_SOCIAL_LOGIN',
+    await this.audit.audit({
       userId: user.id,
+      eventType: 'AUTH',
+      eventAction: 'SOCIAL_LOGIN',
+      success: true,
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
       metadata: {
         provider,
         authAccountId: authAccount.id,
       },
     });
 
-    // Single source of truth for MFA + token issuance
+
+
     return this.tokens.issueTokens({
-      user,
-      session,
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent'],
+      userId: user.id,
+      sessionId: session.id,
+      role: 'CUSTOMER',
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
     });
+
   }
 }
