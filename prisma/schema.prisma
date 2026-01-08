@@ -535,3 +535,17 @@ model UserPermissionOverride {
   @@index([expiresAt])
   @@map("user_permission_overrides")
 }
+
+
+////////////////////////
+// NewsletterSubscription
+////////////////////////
+
+model NewsletterSubscription {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  active    Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
