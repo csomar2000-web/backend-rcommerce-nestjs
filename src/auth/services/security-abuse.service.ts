@@ -13,6 +13,11 @@ type SensitiveActionType =
   | 'EMAIL_VERIFICATION'
   | 'MFA_SETUP';
 
+function bucket(date: Date, minutes: number) {
+  const ms = minutes * 60 * 1000;
+  return new Date(Math.floor(date.getTime() / ms) * ms);
+}
+
 @Injectable()
 export class SecurityAbuseService {
   constructor(private readonly prisma: PrismaService) { }
@@ -32,19 +37,19 @@ export class SecurityAbuseService {
       throw new ForbiddenException('Temporarily blocked');
     }
 
-    const windowStart = new Date(
-      now.getTime() - LOGIN_WINDOW_MINUTES * 60 * 1000,
-    );
+    const windowStart = bucket(now, LOGIN_WINDOW_MINUTES);
 
-    const attempts = await this.prisma.rateLimit.count({
+    const record = await this.prisma.rateLimit.findUnique({
       where: {
-        identifier: params.identifier,
-        action: 'LOGIN',
-        windowStart: { gte: windowStart },
+        identifier_action_windowStart: {
+          identifier: params.identifier,
+          action: 'LOGIN',
+          windowStart,
+        },
       },
     });
 
-    if (attempts >= LOGIN_LIMIT) {
+    if ((record?.count ?? 0) >= LOGIN_LIMIT) {
       await this.blockIdentifier(params.identifier);
       throw new ForbiddenException('Temporarily blocked');
     }
@@ -56,15 +61,27 @@ export class SecurityAbuseService {
     userAgent: string;
   }) {
     const now = new Date();
+    const windowStart = bucket(now, LOGIN_WINDOW_MINUTES);
 
-    await this.prisma.rateLimit.create({
-      data: {
+    await this.prisma.rateLimit.upsert({
+      where: {
+        identifier_action_windowStart: {
+          identifier: params.identifier,
+          action: 'LOGIN',
+          windowStart,
+        },
+      },
+      create: {
         identifier: params.identifier,
         action: 'LOGIN',
-        windowStart: now,
+        windowStart,
         expiresAt: new Date(
-          now.getTime() + LOGIN_WINDOW_MINUTES * 60 * 1000,
+          windowStart.getTime() + LOGIN_WINDOW_MINUTES * 60 * 1000,
         ),
+        count: 1,
+      },
+      update: {
+        count: { increment: 1 },
       },
     });
   }
@@ -80,15 +97,27 @@ export class SecurityAbuseService {
 
   async blockIdentifier(identifier: string) {
     const now = new Date();
+    const windowStart = bucket(now, BLOCK_MINUTES);
 
-    await this.prisma.rateLimit.create({
-      data: {
+    await this.prisma.rateLimit.upsert({
+      where: {
+        identifier_action_windowStart: {
+          identifier,
+          action: 'LOGIN_BLOCK',
+          windowStart,
+        },
+      },
+      create: {
         identifier,
         action: 'LOGIN_BLOCK',
-        windowStart: now,
+        windowStart,
         expiresAt: new Date(
-          now.getTime() + BLOCK_MINUTES * 60 * 1000,
+          windowStart.getTime() + BLOCK_MINUTES * 60 * 1000,
         ),
+        count: 1,
+      },
+      update: {
+        count: { increment: 1 },
       },
     });
   }
@@ -98,31 +127,41 @@ export class SecurityAbuseService {
     type: SensitiveActionType;
   }) {
     const now = new Date();
+    const windowStart = bucket(now, SENSITIVE_WINDOW_MINUTES);
 
-    const windowStart = new Date(
-      now.getTime() - SENSITIVE_WINDOW_MINUTES * 60 * 1000,
-    );
-
-    const attempts = await this.prisma.rateLimit.count({
+    const record = await this.prisma.rateLimit.findUnique({
       where: {
-        identifier: params.identifier,
-        action: params.type,
-        windowStart: { gte: windowStart },
+        identifier_action_windowStart: {
+          identifier: params.identifier,
+          action: params.type,
+          windowStart,
+        },
       },
     });
 
-    if (attempts >= SENSITIVE_LIMIT) {
+    if ((record?.count ?? 0) >= SENSITIVE_LIMIT) {
       throw new ForbiddenException('Too many requests');
     }
 
-    await this.prisma.rateLimit.create({
-      data: {
+    await this.prisma.rateLimit.upsert({
+      where: {
+        identifier_action_windowStart: {
+          identifier: params.identifier,
+          action: params.type,
+          windowStart,
+        },
+      },
+      create: {
         identifier: params.identifier,
         action: params.type,
-        windowStart: now,
+        windowStart,
         expiresAt: new Date(
-          now.getTime() + SENSITIVE_WINDOW_MINUTES * 60 * 1000,
+          windowStart.getTime() + SENSITIVE_WINDOW_MINUTES * 60 * 1000,
         ),
+        count: 1,
+      },
+      update: {
+        count: { increment: 1 },
       },
     });
   }
