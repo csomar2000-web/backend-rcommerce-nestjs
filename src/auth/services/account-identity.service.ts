@@ -70,28 +70,31 @@ export class AccountIdentityService {
       },
     });
 
-    const token = crypto.randomBytes(48).toString('hex');
+    const rawToken = crypto.randomBytes(48).toString('hex');
+    const hashedToken = this.hash(rawToken);
 
     await this.prisma.emailVerification.create({
       data: {
         userId: user.id,
         email: normalizedEmail,
-        token,
+        token: hashedToken,
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       },
     });
 
     await this.mailService.sendEmailVerification(
       normalizedEmail,
-      `${process.env.FRONTEND_URL}/verify-email?token=${token}`,
+      `${process.env.FRONTEND_URL}/verify-email?token=${rawToken}`,
     );
 
     return { success: true };
   }
 
   async verifyEmail(token: string) {
+    const hashedToken = this.hash(token);
+
     const record = await this.prisma.emailVerification.findUnique({
-      where: { token },
+      where: { token: hashedToken },
     });
 
     if (!record || record.expiresAt < new Date() || record.verifiedAt !== null) {
@@ -135,7 +138,8 @@ export class AccountIdentityService {
       throw new BadRequestException('Account already verified');
     }
 
-    const token = crypto.randomBytes(48).toString('hex');
+    const rawToken = crypto.randomBytes(48).toString('hex');
+    const hashedToken = this.hash(rawToken);
 
     await this.prisma.emailVerification.updateMany({
       where: {
@@ -143,14 +147,14 @@ export class AccountIdentityService {
         verifiedAt: null,
       },
       data: {
-        token,
+        token: hashedToken,
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       },
     });
 
     await this.mailService.sendEmailVerification(
       normalizedEmail,
-      `${process.env.FRONTEND_URL}/verify-email?token=${token}`,
+      `${process.env.FRONTEND_URL}/verify-email?token=${rawToken}`,
     );
 
     return { success: true };
@@ -259,5 +263,9 @@ export class AccountIdentityService {
     });
 
     return { success: true };
+  }
+
+  private hash(value: string): string {
+    return crypto.createHash('sha256').update(value).digest('hex');
   }
 }

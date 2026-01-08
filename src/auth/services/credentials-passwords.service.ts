@@ -62,12 +62,9 @@ export class CredentialsPasswordsService {
             throw new UnauthorizedException('Invalid credentials');
         }
 
-        const passwordHash: string = account.passwordHash;
-        const userId: string = account.user.id;
-
         const passwordValid = await bcrypt.compare(
             params.password,
-            passwordHash,
+            account.passwordHash,
         );
 
         if (!passwordValid) {
@@ -82,14 +79,14 @@ export class CredentialsPasswordsService {
         await this.abuse.clearLoginFailures(identifier);
 
         const session = await this.sessions.createSession({
-            userId,
+            userId: account.user.id,
             ipAddress: params.ipAddress,
             userAgent: params.userAgent,
         });
 
         const mfaFactor = await this.prisma.mfaFactor.findFirst({
             where: {
-                userId,
+                userId: account.user.id,
                 type: MfaType.TOTP,
                 revokedAt: null,
                 verifiedAt: { not: null },
@@ -100,12 +97,12 @@ export class CredentialsPasswordsService {
             return {
                 mfaRequired: true,
                 sessionId: session.id,
-                userId,
+                userId: account.user.id,
             };
         }
 
         return {
-            userId,
+            userId: account.user.id,
             sessionId: session.id,
         };
     }
@@ -168,12 +165,13 @@ export class CredentialsPasswordsService {
             return { success: true };
         }
 
-        const token = crypto.randomBytes(48).toString('hex');
+        const rawToken = crypto.randomBytes(48).toString('hex');
+        const hashedToken = this.hash(rawToken);
 
         await this.prisma.passwordReset.create({
             data: {
                 userId: user.id,
-                token,
+                token: hashedToken,
                 expiresAt: new Date(
                     Date.now() + RESET_TOKEN_TTL_HOURS * 60 * 60 * 1000,
                 ),
@@ -182,7 +180,7 @@ export class CredentialsPasswordsService {
 
         await this.mail.sendPasswordReset(
             user.email,
-            `${process.env.FRONTEND_URL}/reset-password?token=${token}`,
+            `${process.env.FRONTEND_URL}/reset-password?token=${rawToken}`,
         );
 
         return { success: true };
@@ -196,9 +194,11 @@ export class CredentialsPasswordsService {
     }) {
         assertStrongPassword(params.newPassword);
 
+        const hashedToken = this.hash(params.token);
+
         const reset = await this.prisma.passwordReset.findFirst({
             where: {
-                token: params.token,
+                token: hashedToken,
                 usedAt: null,
                 expiresAt: { gt: new Date() },
             },
@@ -280,5 +280,9 @@ export class CredentialsPasswordsService {
         ]);
 
         return { success: true };
+    }
+
+    private hash(value: string): string {
+        return crypto.createHash('sha256').update(value).digest('hex');
     }
 }

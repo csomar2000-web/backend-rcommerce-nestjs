@@ -82,12 +82,13 @@ export class TokenService {
         userAgent: string;
     }): Promise<{ refreshToken: string }> {
         const rawToken = crypto.randomBytes(64).toString('hex');
+        const hashedToken = this.hash(rawToken);
 
         await this.prisma.refreshToken.create({
             data: {
                 userId: params.userId,
                 sessionId: params.sessionId,
-                token: rawToken,
+                token: hashedToken,
                 expiresAt: new Date(
                     Date.now() + this.parseTtl(
                         this.config.getOrThrow('JWT_REFRESH_TTL'),
@@ -110,8 +111,10 @@ export class TokenService {
         sessionId: string;
         refreshToken: string;
     }> {
+        const hashedToken = this.hash(params.refreshToken);
+
         const token = await this.prisma.refreshToken.findUnique({
-            where: { token: params.refreshToken },
+            where: { token: hashedToken },
         });
 
         if (!token) {
