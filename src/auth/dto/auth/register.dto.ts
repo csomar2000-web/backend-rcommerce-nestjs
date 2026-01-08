@@ -1,22 +1,13 @@
-import {
-  IsEmail,
-  IsString,
-  MinLength,
-  Matches,
-  IsPhoneNumber,
-} from 'class-validator';
+import { IsEmail, IsString, IsPhoneNumber } from 'class-validator';
 import { MatchFields } from '../../../common/validators/match-fields.validator';
+import { StrongPassword } from '../common/password-rules';
 
 export class RegisterDto {
   @IsEmail()
   email: string;
 
   @IsString()
-  @MinLength(8)
-  @Matches(/^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).+$/, {
-    message:
-      'Password must be at least 8 characters and include upper, lower, number, and special character',
-  })
+  @StrongPassword()
   password: string;
 
   @IsString()

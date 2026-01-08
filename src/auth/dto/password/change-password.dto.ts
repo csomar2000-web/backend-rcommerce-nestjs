@@ -1,10 +1,18 @@
-import { IsString, MinLength } from 'class-validator';
+import { IsString } from 'class-validator';
+import { MatchFields } from '../../../common/validators/match-fields.validator';
+import { StrongPassword } from '../common/password-rules';
 
 export class ChangePasswordDto {
   @IsString()
   currentPassword: string;
 
   @IsString()
-  @MinLength(12)
+  @StrongPassword()
   newPassword: string;
+
+  @IsString()
+  @MatchFields('newPassword', {
+    message: 'Passwords do not match',
+  })
+  confirmPassword: string;
 }

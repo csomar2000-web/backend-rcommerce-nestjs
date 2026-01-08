@@ -1,14 +1,18 @@
-import { IsString, MinLength, Matches } from 'class-validator';
+import { IsString } from 'class-validator';
+import { MatchFields } from '../../../common/validators/match-fields.validator';
+import { StrongPassword } from '../common/password-rules';
 
 export class ResetPasswordDto {
   @IsString()
   token: string;
 
   @IsString()
-  @MinLength(12)
-  @Matches(
-    /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).+$/,
-    { message: 'Password too weak' },
-  )
+  @StrongPassword()
   newPassword: string;
+
+  @IsString()
+  @MatchFields('newPassword', {
+    message: 'Passwords do not match',
+  })
+  confirmPassword: string;
 }

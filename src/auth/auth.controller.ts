@@ -38,10 +38,14 @@ export class AuthController {
     private readonly accountIdentity: AccountIdentityService,
   ) { }
 
+  /* ----------------------------- Registration ----------------------------- */
+
   @Post('register')
   register(@Body() dto: RegisterDto, @Req() req: Request) {
     return this.auth.register({
-      ...dto,
+      email: dto.email,
+      password: dto.password,
+      phoneNumber: dto.phoneNumber,
       ipAddress: req.ip ?? 'unknown',
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
@@ -57,10 +61,13 @@ export class AuthController {
     return this.auth.resendVerification(dto.email);
   }
 
+  /* --------------------------------- Login -------------------------------- */
+
   @Post('login')
   login(@Body() dto: LoginDto, @Req() req: Request) {
     return this.auth.login({
-      ...dto,
+      email: dto.email,
+      password: dto.password,
       ipAddress: req.ip ?? 'unknown',
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
@@ -74,6 +81,8 @@ export class AuthController {
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
   }
+
+  /* ------------------------------- Logout --------------------------------- */
 
   @UseGuards(JwtAuthGuard)
   @Post('logout')
@@ -94,6 +103,8 @@ export class AuthController {
     });
   }
 
+  /* -------------------------- Password Reset ------------------------------- */
+
   @Post('password-reset')
   requestPasswordReset(
     @Body() dto: ForgotPasswordDto,
@@ -105,6 +116,7 @@ export class AuthController {
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
   }
+
   @Post('password-reset/confirm')
   confirmPasswordReset(
     @Body() dto: ResetPasswordDto,
@@ -118,14 +130,21 @@ export class AuthController {
     });
   }
 
+  /* -------------------------- Password Change ------------------------------ */
+
   @UseGuards(JwtAuthGuard)
   @Post('password-change')
   changePassword(@Req() req: any, @Body() dto: ChangePasswordDto) {
     return this.auth.changePassword({
       userId: req.user.userId,
-      ...dto,
+      currentPassword: dto.currentPassword,
+      newPassword: dto.newPassword,
+      ipAddress: req.ip ?? 'unknown',
+      userAgent: req.headers['user-agent'] ?? 'unknown',
     });
   }
+
+  /* ------------------------------ Sessions -------------------------------- */
 
   @UseGuards(JwtAuthGuard)
   @Get('sessions')
@@ -142,6 +161,8 @@ export class AuthController {
       accessToken: this.extractAccessToken(req),
     });
   }
+
+  /* ------------------------------ OAuth ----------------------------------- */
 
   @Post('google')
   googleAuth(@Body() dto: GoogleAuthDto, @Req() req: Request) {
@@ -160,6 +181,8 @@ export class AuthController {
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
   }
+
+  /* -------------------------------- MFA ----------------------------------- */
 
   @UseGuards(JwtAuthGuard)
   @Post('mfa/setup')
@@ -189,6 +212,8 @@ export class AuthController {
   ) {
     return this.auth.completeMfa(dto);
   }
+
+  /* ------------------------------ Helpers --------------------------------- */
 
   private extractAccessToken(req: Request): string {
     const header = req.headers.authorization;
