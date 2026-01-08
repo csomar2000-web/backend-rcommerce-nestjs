@@ -5,6 +5,7 @@ import { APP_GUARD } from '@nestjs/core';
 import * as Joi from 'joi';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
+import { NewsletterModule } from './newsletter/newsletter.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { AuthModule } from './auth/auth.module';
 
     PrismaModule,
     AuthModule,
+    NewsletterModule,
   ],
   providers: [
     {
