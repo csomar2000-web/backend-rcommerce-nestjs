@@ -547,4 +547,6 @@ model NewsletterSubscription {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@map("newsletter_subscriptions")
 }
