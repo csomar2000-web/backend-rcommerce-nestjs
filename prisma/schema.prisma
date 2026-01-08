@@ -446,6 +446,7 @@ model RefreshToken {
   userId    String
   sessionId String
   token     String    @unique
+  familyId  String
   ipAddress String?
   userAgent String?
   expiresAt DateTime
@@ -458,6 +459,7 @@ model RefreshToken {
 
   @@index([userId, revokedAt])
   @@index([expiresAt])
+  @@index([familyId])
   @@map("refresh_tokens")
 }
 

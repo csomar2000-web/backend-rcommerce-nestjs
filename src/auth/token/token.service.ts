@@ -80,15 +80,18 @@ export class TokenService {
         sessionId: string;
         ipAddress: string;
         userAgent: string;
+        familyId?: string;
     }): Promise<{ refreshToken: string }> {
         const rawToken = crypto.randomBytes(64).toString('hex');
         const hashedToken = this.hash(rawToken);
+        const familyId = params.familyId ?? crypto.randomUUID();
 
         await this.prisma.refreshToken.create({
             data: {
                 userId: params.userId,
                 sessionId: params.sessionId,
                 token: hashedToken,
+                familyId,
                 expiresAt: new Date(
                     Date.now() + this.parseTtl(
                         this.config.getOrThrow('JWT_REFRESH_TTL'),
@@ -121,6 +124,17 @@ export class TokenService {
             throw new ForbiddenException('Invalid refresh token');
         }
 
+        if (
+            token.ipAddress !== params.ipAddress ||
+            token.userAgent !== params.userAgent
+        ) {
+            await this.prisma.refreshToken.deleteMany({
+                where: { familyId: token.familyId },
+            });
+
+            throw new ForbiddenException('Refresh token device mismatch');
+        }
+
         const session = await this.prisma.session.findUnique({
             where: { id: token.sessionId },
         });
@@ -129,8 +143,8 @@ export class TokenService {
             throw new ForbiddenException('Session expired');
         }
 
-        await this.prisma.refreshToken.delete({
-            where: { id: token.id },
+        await this.prisma.refreshToken.deleteMany({
+            where: { familyId: token.familyId },
         });
 
         const { refreshToken } = await this.generateRefreshToken({
@@ -138,6 +152,7 @@ export class TokenService {
             sessionId: token.sessionId,
             ipAddress: params.ipAddress,
             userAgent: params.userAgent,
+            familyId: token.familyId,
         });
 
         return {
@@ -153,9 +168,7 @@ export class TokenService {
     ): Promise<void> {
         await this.prisma.session.update({
             where: { id: sessionId },
-            data: {
-                revokedAt: new Date(),
-            },
+            data: { revokedAt: new Date() },
         });
 
         await this.prisma.refreshToken.deleteMany({
