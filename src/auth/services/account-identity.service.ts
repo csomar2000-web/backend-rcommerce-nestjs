@@ -11,6 +11,15 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import * as speakeasy from 'speakeasy';
 
+const PASSWORD_REGEX =
+  /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+
+function assertStrongPassword(password: string) {
+  if (!PASSWORD_REGEX.test(password)) {
+    throw new BadRequestException('Weak password');
+  }
+}
+
 @Injectable()
 export class AccountIdentityService {
   constructor(
@@ -33,9 +42,7 @@ export class AccountIdentityService {
       throw new BadRequestException('Passwords do not match');
     }
 
-    if (!/(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^A-Za-z0-9]).{6,}/.test(password)) {
-      throw new BadRequestException('Weak password');
-    }
+    assertStrongPassword(password);
 
     const existingUser = await this.prisma.user.findUnique({
       where: { email: normalizedEmail },
