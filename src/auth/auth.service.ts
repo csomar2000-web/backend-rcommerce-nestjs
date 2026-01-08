@@ -114,10 +114,15 @@ export class AuthService {
   requestPasswordReset(dto: any) {
     return this.credentials.requestPasswordReset(dto);
   }
-
-  confirmPasswordReset(dto: any) {
+  confirmPasswordReset(dto: {
+    token: string;
+    newPassword: string;
+    ipAddress: string;
+    userAgent: string;
+  }) {
     return this.credentials.confirmPasswordReset(dto);
   }
+
 
   changePassword(dto: any) {
     return this.credentials.changePassword(dto);

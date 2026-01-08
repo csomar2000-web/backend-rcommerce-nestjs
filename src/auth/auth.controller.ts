@@ -105,10 +105,17 @@ export class AuthController {
       userAgent: req.headers['user-agent'] ?? 'unknown',
     });
   }
-
   @Post('password-reset/confirm')
-  confirmPasswordReset(@Body() dto: ResetPasswordDto) {
-    return this.auth.confirmPasswordReset(dto);
+  confirmPasswordReset(
+    @Body() dto: ResetPasswordDto,
+    @Req() req: Request,
+  ) {
+    return this.auth.confirmPasswordReset({
+      token: dto.token,
+      newPassword: dto.newPassword,
+      ipAddress: req.ip ?? 'unknown',
+      userAgent: req.headers['user-agent'] ?? 'unknown',
+    });
   }
 
   @UseGuards(JwtAuthGuard)
