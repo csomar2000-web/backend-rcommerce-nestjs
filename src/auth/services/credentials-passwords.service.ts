@@ -94,7 +94,6 @@ export class CredentialsPasswordsService {
         const factor = await this.prisma.mfaFactor.findFirst({
             where: {
                 userId: params.userId,
-                type: MfaType.TOTP,
                 revokedAt: null,
                 verifiedAt: { not: null },
             },
@@ -122,6 +121,7 @@ export class CredentialsPasswordsService {
 
         return { success: true };
     }
+
 
     async requestPasswordReset(params: {
         email: string;
