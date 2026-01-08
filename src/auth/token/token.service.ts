@@ -23,19 +23,21 @@ export class TokenService {
         private readonly prisma: PrismaService,
     ) { }
 
+    /* ------------------------------------------------------------------
+     * Access Tokens
+     * ------------------------------------------------------------------ */
+
     generateAccessToken(
         userId: string,
         role: string,
         sessionId: string,
     ): string {
-        const jti = crypto.randomUUID();
-
         return this.jwt.sign(
             {
                 sub: userId,
                 role,
                 sessionId,
-                jti,
+                jti: crypto.randomUUID(),
             },
             {
                 issuer: 'auth-service',
@@ -55,12 +57,14 @@ export class TokenService {
 
     async blacklistAccessTokenFromJwt(
         rawAccessToken: string,
-        reason: string,
+        _reason: string,
     ): Promise<void> {
         const payload = this.decodeAccessToken(rawAccessToken);
 
-        await this.prisma.tokenBlacklist.create({
-            data: {
+        await this.prisma.tokenBlacklist.upsert({
+            where: { token: this.hash(payload.jti) },
+            update: {},
+            create: {
                 token: this.hash(payload.jti),
                 expiresAt: new Date(payload.exp * 1000),
             },
@@ -75,6 +79,10 @@ export class TokenService {
         return !!record && record.expiresAt > new Date();
     }
 
+    /* ------------------------------------------------------------------
+     * Refresh Tokens
+     * ------------------------------------------------------------------ */
+
     async generateRefreshToken(params: {
         userId: string;
         sessionId: string;
@@ -83,17 +91,16 @@ export class TokenService {
         familyId?: string;
     }): Promise<{ refreshToken: string }> {
         const rawToken = crypto.randomBytes(64).toString('hex');
-        const hashedToken = this.hash(rawToken);
-        const familyId = params.familyId ?? crypto.randomUUID();
 
         await this.prisma.refreshToken.create({
             data: {
                 userId: params.userId,
                 sessionId: params.sessionId,
-                token: hashedToken,
-                familyId,
+                token: this.hash(rawToken),
+                familyId: params.familyId ?? crypto.randomUUID(),
                 expiresAt: new Date(
-                    Date.now() + this.parseTtl(
+                    Date.now() +
+                    this.parseTtl(
                         this.config.getOrThrow('JWT_REFRESH_TTL'),
                     ),
                 ),
@@ -116,81 +123,120 @@ export class TokenService {
     }> {
         const hashedToken = this.hash(params.refreshToken);
 
-        const token = await this.prisma.refreshToken.findUnique({
-            where: { token: hashedToken },
-        });
+        return this.prisma.$transaction(async (tx) => {
+            const token = await tx.refreshToken.findUnique({
+                where: { token: hashedToken },
+            });
 
-        if (!token) {
-            throw new ForbiddenException('Invalid refresh token');
-        }
+            if (!token) {
+                throw new ForbiddenException('Invalid refresh token');
+            }
 
-        if (
-            token.ipAddress !== params.ipAddress ||
-            token.userAgent !== params.userAgent
-        ) {
-            await this.prisma.refreshToken.deleteMany({
+            if (
+                token.ipAddress !== params.ipAddress ||
+                token.userAgent !== params.userAgent
+            ) {
+                await tx.refreshToken.deleteMany({
+                    where: { familyId: token.familyId },
+                });
+                throw new ForbiddenException('Refresh token device mismatch');
+            }
+
+            const session = await tx.session.findUnique({
+                where: { id: token.sessionId },
+            });
+
+            if (
+                !session ||
+                session.expiresAt <= new Date() ||
+                session.revokedAt !== null
+            ) {
+                await tx.refreshToken.deleteMany({
+                    where: { familyId: token.familyId },
+                });
+                throw new ForbiddenException('Session revoked');
+            }
+
+            await tx.refreshToken.deleteMany({
                 where: { familyId: token.familyId },
             });
 
-            throw new ForbiddenException('Refresh token device mismatch');
-        }
+            const { refreshToken } = await this.generateRefreshToken({
+                userId: token.userId,
+                sessionId: token.sessionId,
+                ipAddress: params.ipAddress,
+                userAgent: params.userAgent,
+                familyId: token.familyId,
+            });
 
-        const session = await this.prisma.session.findUnique({
-            where: { id: token.sessionId },
+            return {
+                userId: token.userId,
+                sessionId: token.sessionId,
+                refreshToken,
+            };
         });
-
-        if (!session || session.expiresAt <= new Date()) {
-            throw new ForbiddenException('Session expired');
-        }
-
-        await this.prisma.refreshToken.deleteMany({
-            where: { familyId: token.familyId },
-        });
-
-        const { refreshToken } = await this.generateRefreshToken({
-            userId: token.userId,
-            sessionId: token.sessionId,
-            ipAddress: params.ipAddress,
-            userAgent: params.userAgent,
-            familyId: token.familyId,
-        });
-
-        return {
-            userId: token.userId,
-            sessionId: token.sessionId,
-            refreshToken,
-        };
     }
+
+    /* ------------------------------------------------------------------
+     * Session Invalidation
+     * ------------------------------------------------------------------ */
 
     async invalidateSession(
         sessionId: string,
-        reason: string,
+        _reason: string,
     ): Promise<void> {
-        await this.prisma.session.update({
-            where: { id: sessionId },
-            data: { revokedAt: new Date() },
-        });
-
-        await this.prisma.refreshToken.deleteMany({
-            where: { sessionId },
-        });
+        await this.prisma.$transaction([
+            this.prisma.session.update({
+                where: { id: sessionId },
+                data: { revokedAt: new Date() },
+            }),
+            this.prisma.refreshToken.deleteMany({
+                where: { sessionId },
+            }),
+        ]);
     }
+
+    async invalidateAllUserSessions(
+        userId: string,
+        _reason: string,
+    ): Promise<void> {
+        await this.prisma.$transaction([
+            this.prisma.session.updateMany({
+                where: {
+                    userId,
+                    revokedAt: null,
+                },
+                data: { revokedAt: new Date() },
+            }),
+            this.prisma.refreshToken.deleteMany({
+                where: { userId },
+            }),
+        ]);
+    }
+
+    /* ------------------------------------------------------------------
+     * Cleanup
+     * ------------------------------------------------------------------ */
 
     async cleanupExpiredAuthData(): Promise<void> {
         const now = new Date();
 
-        await this.prisma.refreshToken.deleteMany({
-            where: { expiresAt: { lt: now } },
-        });
-
-        await this.prisma.session.deleteMany({
-            where: { expiresAt: { lt: now } },
-        });
-
-        await this.prisma.tokenBlacklist.deleteMany({
-            where: { expiresAt: { lt: now } },
-        });
+        await this.prisma.$transaction([
+            this.prisma.refreshToken.deleteMany({
+                where: { expiresAt: { lt: now } },
+            }),
+            this.prisma.session.deleteMany({
+                where: { expiresAt: { lt: now } },
+            }),
+            this.prisma.tokenBlacklist.deleteMany({
+                where: { expiresAt: { lt: now } },
+            }),
+        ]);
     }
+
+    /* ------------------------------------------------------------------
+     * Helpers
+     * ------------------------------------------------------------------ */
 
     private hash(value: string): string {
         return crypto.createHash('sha256').update(value).digest('hex');
@@ -203,8 +249,15 @@ export class TokenService {
         const value = Number(match[1]);
         const unit = match[2];
 
-        if (unit === 'd') return value * 86400000;
-        if (unit === 'h') return value * 3600000;
-        return value * 60000;
+        switch (unit) {
+            case 'd':
+                return value * 86_400_000;
+            case 'h':
+                return value * 3_600_000;
+            case 'm':
+                return value * 60_000;
+            default:
+                throw new Error(`Invalid TTL unit: ${unit}`);
+        }
     }
 }
