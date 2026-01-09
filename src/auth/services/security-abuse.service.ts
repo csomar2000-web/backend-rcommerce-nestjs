@@ -1,5 +1,6 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuthProvider } from '@prisma/client';
 
 const LOGIN_LIMIT = 5;
 const LOGIN_WINDOW_MINUTES = 15;
@@ -18,20 +19,45 @@ function bucket(date: Date, minutes: number) {
   return new Date(Math.floor(date.getTime() / ms) * ms);
 }
 
-function loginIdentifiers(email: string, ip: string) {
-  return [`login:email:${email}`, `login:ip:${ip}`, `login:email_ip:${email}:${ip}`];
+function passwordLoginIdentifiers(email: string, ip: string) {
+  return [
+    `login:email:${email}`,
+    `login:ip:${ip}`,
+    `login:email_ip:${email}:${ip}`,
+  ];
 }
+
+function socialLoginIdentifiers(params: {
+  provider: AuthProvider;
+  providerUserId: string;
+  email?: string | null;
+  ipAddress: string;
+}) {
+  const ids = [
+    `social:${params.provider}:user:${params.providerUserId}`,
+    `social:${params.provider}:ip:${params.ipAddress}`,
+  ];
+
+  if (params.email) {
+    ids.push(`social:${params.provider}:email:${params.email}`);
+    ids.push(
+      `social:${params.provider}:email_ip:${params.email}:${params.ipAddress}`,
+    );
+  }
+
+  return ids;
+}
+
 
 @Injectable()
 export class SecurityAbuseService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
-  async assertLoginAllowed(params: { email: string; ipAddress: string }) {
+  private async assertIdentifiersAllowed(identifiers: string[]) {
     const now = new Date();
     const windowStart = bucket(now, LOGIN_WINDOW_MINUTES);
-    const ids = loginIdentifiers(params.email, params.ipAddress);
 
-    for (const identifier of ids) {
+    for (const identifier of identifiers) {
       const activeBlock = await this.prisma.rateLimit.findFirst({
         where: {
           identifier,
@@ -61,16 +87,11 @@ export class SecurityAbuseService {
     }
   }
 
-  async recordFailedLogin(params: {
-    email: string;
-    ipAddress: string;
-    userAgent: string;
-  }) {
+  private async recordFailure(identifiers: string[]) {
     const now = new Date();
     const windowStart = bucket(now, LOGIN_WINDOW_MINUTES);
-    const ids = loginIdentifiers(params.email, params.ipAddress);
 
-    for (const identifier of ids) {
+    for (const identifier of identifiers) {
       await this.prisma.rateLimit.upsert({
         where: {
           identifier_action_windowStart: {
@@ -95,8 +116,28 @@ export class SecurityAbuseService {
     }
   }
 
+
+  async assertLoginAllowed(params: { email: string; ipAddress: string }) {
+    const ids = passwordLoginIdentifiers(
+      params.email,
+      params.ipAddress,
+    );
+    await this.assertIdentifiersAllowed(ids);
+  }
+
+  async recordFailedLogin(params: {
+    email: string;
+    ipAddress: string;
+  }) {
+    const ids = passwordLoginIdentifiers(
+      params.email,
+      params.ipAddress,
+    );
+    await this.recordFailure(ids);
+  }
+
   async clearLoginFailures(email: string, ipAddress: string) {
-    const ids = loginIdentifiers(email, ipAddress);
+    const ids = passwordLoginIdentifiers(email, ipAddress);
 
     await this.prisma.rateLimit.deleteMany({
       where: {
@@ -104,6 +145,23 @@ export class SecurityAbuseService {
         action: 'LOGIN',
       },
     });
+  }
+
+  async assertSocialLoginAllowed(identifiers: string[]) {
+    await this.assertIdentifiersAllowed(identifiers);
+  }
+
+  async recordFailedSocialLogin(identifiers: string[]) {
+    await this.recordFailure(identifiers);
+  }
+
+  buildSocialIdentifiers(params: {
+    provider: AuthProvider;
+    providerUserId: string;
+    email?: string | null;
+    ipAddress: string;
+  }) {
+    return socialLoginIdentifiers(params);
   }
 
   async blockIdentifier(identifier: string) {
@@ -132,6 +190,7 @@ export class SecurityAbuseService {
       },
     });
   }
+
 
   async assertSensitiveActionAllowed(params: {
     identifier: string;

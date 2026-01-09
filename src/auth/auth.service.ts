@@ -142,28 +142,47 @@ export class AuthService {
     ipAddress: string;
     userAgent: string;
   }) {
-    await this.security.assertLoginAllowed({
-      email: 'google',
-      ipAddress: request.ipAddress,
-    });
+    await this.security.assertSocialLoginAllowed([
+      `social:${AuthProvider.GOOGLE}:ip:${request.ipAddress}`,
+    ]);
 
-    const profile = await this.googleAuth.verifyIdToken(request.idToken);
+    let profile: SocialProfile;
+
+    try {
+      profile = await this.googleAuth.verifyIdToken(request.idToken);
+    } catch (error) {
+      await this.security.recordFailedSocialLogin([
+        `social:${AuthProvider.GOOGLE}:ip:${request.ipAddress}`,
+      ]);
+      throw error;
+    }
+
     return this.handleSocialLogin(AuthProvider.GOOGLE, profile, request);
   }
+
 
   async loginWithFacebook(request: {
     accessToken: string;
     ipAddress: string;
     userAgent: string;
   }) {
-    await this.security.assertLoginAllowed({
-      email: 'facebook',
-      ipAddress: request.ipAddress,
-    });
+    await this.security.assertSocialLoginAllowed([
+      `social:${AuthProvider.FACEBOOK}:ip:${request.ipAddress}`,
+    ]);
 
-    const profile = await this.facebookAuth.verifyAccessToken(
-      request.accessToken,
-    );
+    let profile: SocialProfile;
+
+    try {
+      profile = await this.facebookAuth.verifyAccessToken(
+        request.accessToken,
+      );
+    } catch (error) {
+      await this.security.recordFailedSocialLogin([
+        `social:${AuthProvider.FACEBOOK}:ip:${request.ipAddress}`,
+      ]);
+      throw error;
+    }
+
     return this.handleSocialLogin(AuthProvider.FACEBOOK, profile, request);
   }
 
@@ -175,6 +194,15 @@ export class AuthService {
     if (!profile.email || !profile.emailVerified) {
       throw new UnauthorizedException();
     }
+
+    const identifiers = this.security.buildSocialIdentifiers({
+      provider,
+      providerUserId: profile.providerId,
+      email: profile.email,
+      ipAddress: context.ipAddress,
+    });
+
+    await this.security.assertSocialLoginAllowed(identifiers);
 
     const { user, authAccount } =
       await this.accountIdentity.upsertSocialAccount({
@@ -208,4 +236,5 @@ export class AuthService {
       userAgent: context.userAgent,
     });
   }
+
 }

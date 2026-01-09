@@ -21,6 +21,7 @@ const PASSWORD_REGEX =
 
 const MFA_KEY = Buffer.from(process.env.MFA_SECRET_KEY!, 'hex');
 
+
 function assertStrongPassword(password: string) {
     if (!PASSWORD_REGEX.test(password)) {
         throw new BadRequestException('Password too weak');
@@ -82,7 +83,6 @@ export class CredentialsPasswordsService {
             await this.abuse.recordFailedLogin({
                 email,
                 ipAddress: params.ipAddress,
-                userAgent: params.userAgent,
             });
             throw new UnauthorizedException('Invalid credentials');
         }
@@ -96,7 +96,6 @@ export class CredentialsPasswordsService {
             await this.abuse.recordFailedLogin({
                 email,
                 ipAddress: params.ipAddress,
-                userAgent: params.userAgent,
             });
             throw new UnauthorizedException('Invalid credentials');
         }
