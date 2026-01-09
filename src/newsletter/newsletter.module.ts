@@ -9,4 +9,4 @@ import { PrismaModule } from '../prisma/prisma.module';
   providers: [NewsletterService],
   exports: [NewsletterService],
 })
-export class NewsletterModule {}
+export class NewsletterModule { }
