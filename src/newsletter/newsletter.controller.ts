@@ -8,14 +8,20 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { NewsletterService } from './newsletter.service';
+
 import { SubscribeDto } from './dto/subscribe.dto';
 import { UnsubscribeDto } from './dto/unsubscribe.dto';
 import { AdminListSubscribersDto } from './dto/admin-list-subscribers.dto';
-import { AdminGuard } from '../auth/admin.guard';
+
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 @Controller('newsletter')
 export class NewsletterController {
-  constructor(private readonly newsletterService: NewsletterService) {}
+  constructor(private readonly newsletterService: NewsletterService) { }
+
+  /* ------------------------------ Public ---------------------------------- */
 
   @Post('subscribe')
   subscribe(@Body() dto: SubscribeDto) {
@@ -27,7 +33,10 @@ export class NewsletterController {
     return this.newsletterService.unsubscribe(dto.email);
   }
 
-  @UseGuards(AdminGuard)
+  /* ------------------------------ Admin ----------------------------------- */
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @Get('admin/list')
   list(@Query() query: AdminListSubscribersDto) {
     const active =
@@ -36,7 +45,8 @@ export class NewsletterController {
     return this.newsletterService.findAll(active);
   }
 
-  @UseGuards(AdminGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('admin')
   @Get('admin/export')
   export(@Query() query: AdminListSubscribersDto) {
     const active =
